@@ -25,12 +25,29 @@ const DownloadForm = ({ genres, onStartDownload }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
     // Validate URLs
     const validUrls = urls.filter(url => url.trim() !== '');
     if (validUrls.length === 0) {
       alert('Please enter at least one YouTube URL');
       return;
+    }
+
+    // Check for playlist URLs and warn user
+    const playlistUrls = validUrls.filter(url =>
+      url.includes('list=') || url.includes('playlist')
+    );
+
+    if (playlistUrls.length > 0) {
+      const confirmed = confirm(
+        `⚠️ Warning: You've entered ${playlistUrls.length} playlist URL(s).\n\n` +
+        `This tool will only download the SINGLE VIDEO from the playlist URL, not the entire playlist.\n\n` +
+        `If you want to download the entire playlist, please use a different tool.\n\n` +
+        `Continue with single video download?`
+      );
+      if (!confirmed) {
+        return;
+      }
     }
 
     // Validate genre

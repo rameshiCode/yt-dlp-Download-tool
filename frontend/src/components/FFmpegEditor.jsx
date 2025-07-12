@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Play, Pause, Square, Scissors, Download, Upload, Volume2, SkipBack, SkipForward } from 'lucide-react';
+import { Play, Pause, Square, Scissors, Download, Upload, Volume2, SkipBack, SkipForward, Music } from 'lucide-react';
 
 const FFmpegEditor = () => {
   const [audioFiles, setAudioFiles] = useState([]);

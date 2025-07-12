@@ -138,21 +138,21 @@ async def download_video(download_id: str, url: str, genre: str, quality: str = 
     try:
         genre_folder = get_genre_folder(genre)
 
-        # yt-dlp options with better file naming
+        # yt-dlp options with better file naming and single video download
         ydl_opts = {
             'format': 'bestaudio/best',
-            'extractaudio': True,
-            'audioformat': 'mp3',
-            'audioquality': quality,
             'outtmpl': str(genre_folder / '%(uploader)s - %(title)s.%(ext)s'),
-            'writeinfojson': True,
-            'embedsubs': True,
+            'writeinfojson': False,  # Disable info json to avoid clutter
+            'noplaylist': True,  # Only download single video, not entire playlist
             'progress_hooks': [DownloadProgressHook(download_id)],
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
                 'preferredquality': quality,
             }],
+            'extractaudio': True,
+            'audioformat': 'mp3',
+            'audioquality': quality,
         }
         
         download_queue[download_id].status = 'downloading'
@@ -230,17 +230,28 @@ async def download_video(download_id: str, url: str, genre: str, quality: str = 
         # Move to history
         completed_download = download_queue[download_id]
         download_history.append(completed_download)
+
+        # Remove from active queue
+        del download_queue[download_id]
         
     except Exception as e:
         logger.error(f"Download error for {url}: {str(e)}")
         download_queue[download_id].status = 'error'
         download_queue[download_id].error = str(e)
-        
+
         await manager.broadcast({
             'type': 'error',
             'download_id': download_id,
             'error': str(e)
         })
+
+        # Move failed downloads to history after a delay
+        import asyncio
+        await asyncio.sleep(5)  # Keep error visible for 5 seconds
+        if download_id in download_queue:
+            failed_download = download_queue[download_id]
+            download_history.append(failed_download)
+            del download_queue[download_id]
 
 def extract_artist_and_title(video_title: str, uploader: str):
     """Extract artist and title from video title using common patterns"""
