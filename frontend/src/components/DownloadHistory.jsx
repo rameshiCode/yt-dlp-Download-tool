@@ -31,9 +31,20 @@ const DownloadHistory = ({ history }) => {
               </div>
               
               <div className="flex-1 min-w-0">
-                <h3 className="text-sm font-medium text-gray-900 truncate">
-                  {download.title || 'Unknown Title'}
-                </h3>
+                {download.artist && download.clean_title ? (
+                  <>
+                    <h3 className="text-sm font-medium text-gray-900 truncate">
+                      🎵 {download.clean_title}
+                    </h3>
+                    <p className="text-xs font-medium text-blue-600 truncate">
+                      👤 {download.artist}
+                    </p>
+                  </>
+                ) : (
+                  <h3 className="text-sm font-medium text-gray-900 truncate">
+                    {download.title || 'Unknown Title'}
+                  </h3>
+                )}
                 
                 <div className="mt-2 space-y-1">
                   <div className="flex items-center text-xs text-gray-500">

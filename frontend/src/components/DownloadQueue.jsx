@@ -78,12 +78,28 @@ const DownloadQueue = ({ downloads }) => {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between">
                   <div className="flex-1">
-                    <h3 className="text-lg font-medium text-gray-900 truncate">
-                      {download.title || 'Loading title...'}
-                    </h3>
-                    <p className="text-sm text-gray-500 truncate">
-                      {download.url}
-                    </p>
+                    {download.artist && download.clean_title ? (
+                      <>
+                        <h3 className="text-lg font-medium text-gray-900 truncate">
+                          🎵 {download.clean_title}
+                        </h3>
+                        <p className="text-sm font-medium text-blue-600 truncate">
+                          👤 {download.artist}
+                        </p>
+                        <p className="text-xs text-gray-500 truncate">
+                          {download.url}
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <h3 className="text-lg font-medium text-gray-900 truncate">
+                          {download.title || 'Loading metadata...'}
+                        </h3>
+                        <p className="text-sm text-gray-500 truncate">
+                          {download.url}
+                        </p>
+                      </>
+                    )}
                   </div>
                   
                   <div className="flex items-center space-x-3">
