@@ -1,10 +1,10 @@
-import { Clock, Download, AlertCircle, CheckCircle, Music } from 'lucide-react';
+import { Clock, Download, AlertCircle, CheckCircle, Music, Loader2 } from 'lucide-react';
 
 const DownloadQueue = ({ downloads }) => {
-  const getStatusIcon = (status) => {
+  const getStatusIcon = (status, progress = 0) => {
     switch (status) {
       case 'pending':
-        return <Clock className="h-5 w-5 text-yellow-500" />;
+        return <Loader2 className="h-5 w-5 text-yellow-500 animate-spin" />;
       case 'downloading':
         return <Download className="h-5 w-5 text-blue-500 animate-pulse" />;
       case 'completed':
@@ -12,7 +12,7 @@ const DownloadQueue = ({ downloads }) => {
       case 'error':
         return <AlertCircle className="h-5 w-5 text-red-500" />;
       default:
-        return <Clock className="h-5 w-5 text-gray-500" />;
+        return <Loader2 className="h-5 w-5 text-gray-500 animate-spin" />;
     }
   };
 
@@ -72,7 +72,7 @@ const DownloadQueue = ({ downloads }) => {
           <div key={download.id} className="card">
             <div className="flex items-start space-x-4">
               <div className="flex-shrink-0 pt-1">
-                {getStatusIcon(download.status)}
+                {getStatusIcon(download.status, download.progress)}
               </div>
               
               <div className="flex-1 min-w-0">
@@ -110,18 +110,32 @@ const DownloadQueue = ({ downloads }) => {
                 </div>
 
                 {/* Progress Bar */}
-                {download.status === 'downloading' && (
+                {(download.status === 'downloading' || download.status === 'pending') && (
                   <div className="mt-3">
                     <div className="flex items-center justify-between text-sm">
-                      <span className="text-gray-600">Progress</span>
+                      <span className="text-gray-600">
+                        {download.status === 'pending' ? 'Extracting metadata...' : 'Downloading'}
+                      </span>
                       <span className="text-gray-900 font-medium">
-                        {Math.round(download.progress || 0)}%
+                        {download.status === 'pending' ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          `${Math.round(download.progress || 0)}%`
+                        )}
                       </span>
                     </div>
                     <div className="mt-1 w-full bg-gray-200 rounded-full h-2">
                       <div
-                        className="bg-primary-600 h-2 rounded-full transition-all duration-300"
-                        style={{ width: `${download.progress || 0}%` }}
+                        className={`h-2 rounded-full transition-all duration-300 ${
+                          download.status === 'pending'
+                            ? 'bg-yellow-500 animate-pulse'
+                            : 'bg-blue-600'
+                        }`}
+                        style={{
+                          width: download.status === 'pending'
+                            ? '30%'
+                            : `${download.progress || 0}%`
+                        }}
                       />
                     </div>
                   </div>

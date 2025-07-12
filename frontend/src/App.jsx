@@ -90,13 +90,49 @@ function App() {
 
   const handleStartDownload = async (urls, genre) => {
     try {
+      // Immediately add pending downloads to the UI
+      const pendingDownloads = urls.map(url => ({
+        id: `pending-${Date.now()}-${Math.random()}`,
+        url: url,
+        status: 'pending',
+        progress: 0,
+        title: 'Extracting metadata...',
+        artist: null,
+        clean_title: null,
+        error: null,
+        file_path: null
+      }));
+
+      setDownloads(prev => [...prev, ...pendingDownloads]);
+
       const result = await downloadAPI.startDownload(urls, genre);
       console.log('Download started:', result);
-      // Refresh status to show new downloads
-      setTimeout(loadStatus, 500);
+
+      // Update the pending downloads with real IDs
+      if (result.download_ids) {
+        setDownloads(prev => {
+          const newDownloads = [...prev];
+          result.download_ids.forEach((realId, index) => {
+            const pendingIndex = newDownloads.findIndex(d => d.id === pendingDownloads[index].id);
+            if (pendingIndex !== -1) {
+              newDownloads[pendingIndex] = {
+                ...newDownloads[pendingIndex],
+                id: realId,
+                status: 'pending'
+              };
+            }
+          });
+          return newDownloads;
+        });
+      }
+
+      // Also refresh status to sync with backend
+      setTimeout(loadStatus, 1000);
     } catch (error) {
       console.error('Failed to start download:', error);
       alert('Failed to start download: ' + error.message);
+      // Remove pending downloads on error
+      setDownloads(prev => prev.filter(d => !d.id.startsWith('pending-')));
     }
   };
 
@@ -145,22 +181,31 @@ function App() {
             {[
               { id: 'download', label: 'Download', icon: Download },
               { id: 'ffmpeg', label: 'Audio Editor', icon: Scissors },
-              { id: 'queue', label: 'Queue', icon: Clock },
+              { id: 'queue', label: `Queue (${downloads.length})`, icon: Clock },
               { id: 'history', label: 'History', icon: Folder },
-            ].map(({ id, label, icon: Icon }) => (
-              <button
-                key={id}
-                onClick={() => setActiveTab(id)}
-                className={`flex items-center space-x-2 py-4 px-6 rounded-t-xl font-semibold text-sm transition-all duration-300 ${
-                  activeTab === id
-                    ? 'bg-white text-blue-600 shadow-lg border-b-2 border-blue-600 transform -translate-y-1'
-                    : 'text-gray-600 hover:text-blue-600 hover:bg-white/50 hover:transform hover:-translate-y-0.5'
-                }`}
-              >
-                <Icon className="h-5 w-5" />
-                <span>{label}</span>
-              </button>
-            ))}
+            ].map(({ id, label, icon: Icon }) => {
+              const hasActiveDownloads = id === 'queue' && downloads.some(d =>
+                d.status === 'pending' || d.status === 'downloading'
+              );
+
+              return (
+                <button
+                  key={id}
+                  onClick={() => setActiveTab(id)}
+                  className={`flex items-center space-x-2 py-4 px-6 rounded-t-xl font-semibold text-sm transition-all duration-300 relative ${
+                    activeTab === id
+                      ? 'bg-white text-blue-600 shadow-lg border-b-2 border-blue-600 transform -translate-y-1'
+                      : 'text-gray-600 hover:text-blue-600 hover:bg-white/50 hover:transform hover:-translate-y-0.5'
+                  }`}
+                >
+                  <Icon className={`h-5 w-5 ${hasActiveDownloads ? 'animate-pulse' : ''}`} />
+                  <span>{label}</span>
+                  {hasActiveDownloads && (
+                    <div className="absolute -top-1 -right-1 w-3 h-3 bg-blue-500 rounded-full animate-ping"></div>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </div>
       </nav>

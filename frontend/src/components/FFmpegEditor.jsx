@@ -106,41 +106,79 @@ const FFmpegEditor = () => {
     const width = canvas.width;
     const height = canvas.height;
 
-    // Clear canvas
-    ctx.fillStyle = '#f3f4f6';
+    // Clear canvas with gradient background
+    const gradient = ctx.createLinearGradient(0, 0, 0, height);
+    gradient.addColorStop(0, '#1e293b');
+    gradient.addColorStop(1, '#334155');
+    ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, width, height);
 
-    // Draw waveform placeholder (simplified visualization)
-    ctx.fillStyle = '#3b82f6';
-    for (let i = 0; i < width; i += 4) {
-      const amplitude = Math.random() * height * 0.8;
-      ctx.fillRect(i, (height - amplitude) / 2, 2, amplitude);
+    // Generate realistic waveform data
+    const barWidth = 3;
+    const barSpacing = 1;
+    const numBars = Math.floor(width / (barWidth + barSpacing));
+
+    // Create waveform with varying amplitudes
+    for (let i = 0; i < numBars; i++) {
+      const x = i * (barWidth + barSpacing);
+
+      // Create more realistic waveform pattern
+      const baseAmplitude = Math.sin(i * 0.1) * 0.3 + 0.4; // Base wave pattern
+      const noise = (Math.random() - 0.5) * 0.4; // Random variation
+      const envelope = Math.sin((i / numBars) * Math.PI) * 0.8; // Envelope shape
+
+      let amplitude = (baseAmplitude + noise) * envelope;
+      amplitude = Math.max(0.1, Math.min(0.9, amplitude)); // Clamp values
+
+      const barHeight = amplitude * height * 0.8;
+      const y = (height - barHeight) / 2;
+
+      // Create gradient for each bar
+      const barGradient = ctx.createLinearGradient(0, y, 0, y + barHeight);
+      barGradient.addColorStop(0, '#60a5fa');
+      barGradient.addColorStop(0.5, '#3b82f6');
+      barGradient.addColorStop(1, '#1d4ed8');
+
+      ctx.fillStyle = barGradient;
+      ctx.fillRect(x, y, barWidth, barHeight);
+
+      // Add highlight on top
+      ctx.fillStyle = 'rgba(147, 197, 253, 0.6)';
+      ctx.fillRect(x, y, barWidth, Math.max(1, barHeight * 0.1));
     }
 
     // Draw current time indicator
     const currentX = (currentTime / duration) * width;
     ctx.strokeStyle = '#ef4444';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 3;
+    ctx.shadowColor = '#ef4444';
+    ctx.shadowBlur = 5;
     ctx.beginPath();
     ctx.moveTo(currentX, 0);
     ctx.lineTo(currentX, height);
     ctx.stroke();
+    ctx.shadowBlur = 0;
 
-    // Draw start/end markers
+    // Draw start/end selection area
     const startX = (startTime / duration) * width;
     const endX = (endTime / duration) * width;
-    
-    ctx.fillStyle = 'rgba(34, 197, 94, 0.3)';
+
+    // Selection overlay
+    ctx.fillStyle = 'rgba(34, 197, 94, 0.2)';
     ctx.fillRect(startX, 0, endX - startX, height);
-    
+
+    // Selection borders
     ctx.strokeStyle = '#22c55e';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 3;
+    ctx.shadowColor = '#22c55e';
+    ctx.shadowBlur = 3;
     ctx.beginPath();
     ctx.moveTo(startX, 0);
     ctx.lineTo(startX, height);
     ctx.moveTo(endX, 0);
     ctx.lineTo(endX, height);
     ctx.stroke();
+    ctx.shadowBlur = 0;
   };
 
   useEffect(() => {
@@ -153,6 +191,31 @@ const FFmpegEditor = () => {
     const minutes = Math.floor(time / 60);
     const seconds = Math.floor(time % 60);
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  };
+
+  // Convert MM.SS format to seconds
+  const parseTimeInput = (input) => {
+    if (!input) return 0;
+
+    // Handle different formats: "1.22", "0.12", "12", "1:22"
+    const str = input.toString().replace(':', '.');
+
+    if (str.includes('.')) {
+      const parts = str.split('.');
+      const minutes = parseInt(parts[0]) || 0;
+      const seconds = parseInt(parts[1]) || 0;
+      return minutes * 60 + seconds;
+    } else {
+      // Just seconds
+      return parseFloat(str) || 0;
+    }
+  };
+
+  // Convert seconds to MM.SS format for input display
+  const formatTimeInput = (time) => {
+    const minutes = Math.floor(time / 60);
+    const seconds = Math.floor(time % 60);
+    return `${minutes}.${seconds.toString().padStart(2, '0')}`;
   };
 
   const handleCutAudio = async () => {
@@ -260,13 +323,18 @@ const FFmpegEditor = () => {
 
           {/* Waveform Display */}
           <div className="mb-6">
-            <canvas
-              ref={canvasRef}
-              width={800}
-              height={200}
-              className="w-full border border-gray-300 rounded-lg cursor-pointer"
-              onClick={handleSeek}
-            />
+            <div className="bg-gradient-to-r from-slate-800 to-slate-700 p-4 rounded-lg">
+              <canvas
+                ref={canvasRef}
+                width={800}
+                height={200}
+                className="w-full rounded-lg cursor-pointer shadow-inner"
+                onClick={handleSeek}
+              />
+              <div className="mt-2 text-center text-sm text-gray-300">
+                🎵 Click anywhere on the waveform to jump to that position
+              </div>
+            </div>
           </div>
 
           {/* Controls */}
@@ -313,16 +381,16 @@ const FFmpegEditor = () => {
             {/* Cutting Controls */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="space-y-2">
-                <label className="block text-sm font-medium text-gray-700">Start Time</label>
+                <label className="block text-sm font-medium text-gray-700">
+                  Start Time <span className="text-xs text-gray-500">(M.SS format)</span>
+                </label>
                 <div className="flex space-x-2">
                   <input
-                    type="number"
-                    value={startTime.toFixed(1)}
-                    onChange={(e) => setStartTime(parseFloat(e.target.value) || 0)}
-                    step="0.1"
-                    min="0"
-                    max={duration}
-                    className="input-field flex-1"
+                    type="text"
+                    value={formatTimeInput(startTime)}
+                    onChange={(e) => setStartTime(parseTimeInput(e.target.value))}
+                    placeholder="0.00"
+                    className="input-field flex-1 font-mono"
                   />
                   <button
                     onClick={setStartMarker}
@@ -331,19 +399,22 @@ const FFmpegEditor = () => {
                     Set Start
                   </button>
                 </div>
+                <p className="text-xs text-gray-500">
+                  Examples: 0.12 = 12s, 1.22 = 1m 22s
+                </p>
               </div>
 
               <div className="space-y-2">
-                <label className="block text-sm font-medium text-gray-700">End Time</label>
+                <label className="block text-sm font-medium text-gray-700">
+                  End Time <span className="text-xs text-gray-500">(M.SS format)</span>
+                </label>
                 <div className="flex space-x-2">
                   <input
-                    type="number"
-                    value={endTime.toFixed(1)}
-                    onChange={(e) => setEndTime(parseFloat(e.target.value) || duration)}
-                    step="0.1"
-                    min="0"
-                    max={duration}
-                    className="input-field flex-1"
+                    type="text"
+                    value={formatTimeInput(endTime)}
+                    onChange={(e) => setEndTime(parseTimeInput(e.target.value))}
+                    placeholder="1.00"
+                    className="input-field flex-1 font-mono"
                   />
                   <button
                     onClick={setEndMarker}
@@ -352,12 +423,18 @@ const FFmpegEditor = () => {
                     Set End
                   </button>
                 </div>
+                <p className="text-xs text-gray-500">
+                  Examples: 2.30 = 2m 30s, 0.45 = 45s
+                </p>
               </div>
 
               <div className="space-y-2">
                 <label className="block text-sm font-medium text-gray-700">Duration</label>
-                <p className="input-field bg-gray-50 text-center">
+                <p className="input-field bg-gray-50 text-center font-mono">
                   {formatTime(endTime - startTime)}
+                </p>
+                <p className="text-xs text-gray-500 text-center">
+                  {formatTimeInput(endTime - startTime)} format
                 </p>
               </div>
             </div>
