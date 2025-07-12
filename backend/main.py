@@ -41,6 +41,8 @@ class DownloadStatus(BaseModel):
     status: str  # pending, downloading, completed, error
     progress: float = 0.0
     title: Optional[str] = None
+    artist: Optional[str] = None
+    clean_title: Optional[str] = None
     error: Optional[str] = None
     file_path: Optional[str] = None
 
@@ -116,17 +118,22 @@ async def download_video(download_id: str, url: str, genre: str, quality: str = 
     """Download a single video"""
     try:
         genre_folder = get_genre_folder(genre)
-        
-        # yt-dlp options
+
+        # yt-dlp options with better file naming
         ydl_opts = {
             'format': 'bestaudio/best',
             'extractaudio': True,
             'audioformat': 'mp3',
             'audioquality': quality,
-            'outtmpl': str(genre_folder / '%(title)s.%(ext)s'),
+            'outtmpl': str(genre_folder / '%(uploader)s - %(title)s.%(ext)s'),
             'writeinfojson': True,
             'embedsubs': True,
             'progress_hooks': [DownloadProgressHook(download_id)],
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': quality,
+            }],
         }
         
         download_queue[download_id].status = 'downloading'
@@ -134,22 +141,72 @@ async def download_video(download_id: str, url: str, genre: str, quality: str = 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             # Extract info first
             info = ydl.extract_info(url, download=False)
-            download_queue[download_id].title = info.get('title', 'Unknown')
-            
-            # Broadcast title update
+            video_title = info.get('title', 'Unknown')
+            uploader = info.get('uploader', 'Unknown')
+
+            # Extract artist and clean title
+            artist, clean_title = extract_artist_and_title(video_title, uploader)
+
+            # Update download status
+            download_queue[download_id].title = video_title
+            download_queue[download_id].artist = artist
+            download_queue[download_id].clean_title = clean_title
+
+            # Broadcast title and artist update
             await manager.broadcast({
-                'type': 'title_update',
+                'type': 'metadata_update',
                 'download_id': download_id,
-                'title': info.get('title', 'Unknown')
+                'title': video_title,
+                'artist': artist,
+                'clean_title': clean_title
             })
             
             # Download the video
             ydl.download([url])
-            
-            # Add metadata to MP3
-            mp3_path = genre_folder / f"{info.get('title', 'Unknown')}.mp3"
-            if mp3_path.exists():
+
+            # Find the downloaded MP3 file and add metadata
+            uploader = info.get('uploader', 'Unknown')
+            title = info.get('title', 'Unknown')
+
+            # Try different possible file names
+            possible_names = [
+                f"{uploader} - {title}.mp3",
+                f"{title}.mp3",
+                f"{uploader}_{title}.mp3"
+            ]
+
+            mp3_path = None
+            for name in possible_names:
+                potential_path = genre_folder / name
+                if potential_path.exists():
+                    mp3_path = potential_path
+                    break
+
+            # If we still can't find it, look for any .mp3 file in the directory
+            if not mp3_path:
+                mp3_files = list(genre_folder.glob("*.mp3"))
+                if mp3_files:
+                    # Get the most recently created MP3 file
+                    mp3_path = max(mp3_files, key=lambda p: p.stat().st_mtime)
+
+            if mp3_path and mp3_path.exists():
                 add_metadata_to_mp3(str(mp3_path), info, genre)
+
+                # Rename file to a cleaner format: Artist - Title.mp3
+                artist, clean_title = extract_artist_and_title(title, uploader)
+                clean_filename = f"{artist} - {clean_title}.mp3"
+                # Remove invalid characters for filename
+                clean_filename = "".join(c for c in clean_filename if c.isalnum() or c in (' ', '-', '_', '.')).rstrip()
+                new_path = genre_folder / clean_filename
+
+                if mp3_path != new_path:
+                    try:
+                        mp3_path.rename(new_path)
+                        logger.info(f"Renamed file to: {clean_filename}")
+                    except Exception as e:
+                        logger.warning(f"Could not rename file: {e}")
+            else:
+                logger.warning(f"Could not find downloaded MP3 file for {title}")
         
         # Move to history
         completed_download = download_queue[download_id]
@@ -166,24 +223,75 @@ async def download_video(download_id: str, url: str, genre: str, quality: str = 
             'error': str(e)
         })
 
+def extract_artist_and_title(video_title: str, uploader: str):
+    """Extract artist and title from video title using common patterns"""
+    title = video_title.lower()
+
+    # Common separators for artist - title
+    separators = [' - ', ' – ', ' — ', ' | ', ' • ', ': ', ' ft. ', ' feat. ', ' featuring ']
+
+    for sep in separators:
+        if sep in title:
+            parts = title.split(sep, 1)
+            if len(parts) == 2:
+                artist = parts[0].strip().title()
+                song_title = parts[1].strip().title()
+                return artist, song_title
+
+    # If no separator found, try to use uploader as artist
+    if uploader and uploader.lower() not in ['youtube', 'vevo', 'official']:
+        # Clean up common suffixes from uploader names
+        clean_uploader = uploader
+        suffixes_to_remove = ['Official', 'VEVO', 'Records', 'Music', 'Channel', 'TV']
+        for suffix in suffixes_to_remove:
+            clean_uploader = clean_uploader.replace(suffix, '').strip()
+
+        return clean_uploader, video_title
+
+    # Fallback: use video title as both artist and title
+    return "Unknown Artist", video_title
+
 def add_metadata_to_mp3(file_path: str, info: dict, genre: str):
-    """Add metadata tags to MP3 file"""
+    """Add metadata tags to MP3 file with enhanced artist/title extraction"""
     try:
         audio = MP3(file_path, ID3=ID3)
-        
+
         # Add ID3 tag if it doesn't exist
         if audio.tags is None:
             audio.add_tags()
-        
-        # Add metadata
-        audio.tags.add(TIT2(encoding=3, text=info.get('title', '')))
-        audio.tags.add(TPE1(encoding=3, text=info.get('uploader', '')))
-        audio.tags.add(TALB(encoding=3, text=info.get('uploader', '')))
+
+        # Extract artist and title from video metadata
+        video_title = info.get('title', 'Unknown Title')
+        uploader = info.get('uploader', 'Unknown Artist')
+
+        # Try to extract artist and title intelligently
+        artist, title = extract_artist_and_title(video_title, uploader)
+
+        # Add enhanced metadata
+        audio.tags.add(TIT2(encoding=3, text=title))
+        audio.tags.add(TPE1(encoding=3, text=artist))
+        audio.tags.add(TALB(encoding=3, text=f"{genre} Collection"))
         audio.tags.add(TCON(encoding=3, text=genre))
-        
+
+        # Add additional metadata if available
+        if info.get('upload_date'):
+            try:
+                year = info['upload_date'][:4]
+                from mutagen.id3 import TDRC
+                audio.tags.add(TDRC(encoding=3, text=year))
+            except:
+                pass
+
+        if info.get('duration'):
+            try:
+                from mutagen.id3 import TLEN
+                audio.tags.add(TLEN(encoding=3, text=str(int(info['duration'] * 1000))))
+            except:
+                pass
+
         audio.save()
-        logger.info(f"Added metadata to {file_path}")
-        
+        logger.info(f"Added enhanced metadata to {file_path}: Artist='{artist}', Title='{title}', Genre='{genre}'")
+
     except Exception as e:
         logger.error(f"Failed to add metadata to {file_path}: {str(e)}")
 
