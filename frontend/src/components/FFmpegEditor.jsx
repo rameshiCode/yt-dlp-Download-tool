@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Play, Pause, Square, Scissors, Download, Upload, Volume2, SkipBack, SkipForward, Music } from 'lucide-react';
+import { Play, Pause, Square, Scissors, Download, Upload, Volume2, VolumeX, SkipBack, SkipForward, Music } from 'lucide-react';
 
 const FFmpegEditor = () => {
   const [audioFiles, setAudioFiles] = useState([]);
@@ -8,6 +8,7 @@ const FFmpegEditor = () => {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(1);
+  const [previousVolume, setPreviousVolume] = useState(1);
   const [startTime, setStartTime] = useState(0);
   const [endTime, setEndTime] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -24,7 +25,7 @@ const FFmpegEditor = () => {
       audioRef.current.addEventListener('loadedmetadata', handleLoadedMetadata);
       audioRef.current.addEventListener('timeupdate', handleTimeUpdate);
       audioRef.current.addEventListener('ended', handleEnded);
-      
+
       return () => {
         if (audioRef.current) {
           audioRef.current.removeEventListener('loadedmetadata', handleLoadedMetadata);
@@ -34,6 +35,13 @@ const FFmpegEditor = () => {
       };
     }
   }, [selectedFile]);
+
+  // Update audio volume when volume state changes
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.volume = volume;
+    }
+  }, [volume]);
 
   const loadAudioFiles = async () => {
     try {
@@ -96,6 +104,15 @@ const FFmpegEditor = () => {
 
   const setEndMarker = () => {
     setEndTime(currentTime);
+  };
+
+  const toggleMute = () => {
+    if (volume > 0) {
+      setPreviousVolume(volume);
+      setVolume(0);
+    } else {
+      setVolume(previousVolume);
+    }
   };
 
   const drawWaveform = () => {
@@ -376,6 +393,51 @@ const FFmpegEditor = () => {
               <p className="text-lg font-mono">
                 {formatTime(currentTime)} / {formatTime(duration)}
               </p>
+            </div>
+
+            {/* Volume Control */}
+            <div className="flex items-center justify-center space-x-4 bg-gray-50 rounded-lg p-4">
+              <button
+                onClick={toggleMute}
+                className="p-2 hover:bg-gray-200 rounded-full transition-colors"
+                title={volume > 0 ? 'Mute' : 'Unmute'}
+              >
+                {volume > 0 ? (
+                  <Volume2 className="h-5 w-5 text-gray-600" />
+                ) : (
+                  <VolumeX className="h-5 w-5 text-red-500" />
+                )}
+              </button>
+
+              <div className="flex items-center space-x-3">
+                <span className="text-xs text-gray-500">0%</span>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={volume}
+                  onChange={(e) => {
+                    const newVolume = parseFloat(e.target.value);
+                    setVolume(newVolume);
+                    if (newVolume > 0) {
+                      setPreviousVolume(newVolume);
+                    }
+                  }}
+                  className="w-32 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
+                  style={{
+                    background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${volume * 100}%, #e5e7eb ${volume * 100}%, #e5e7eb 100%)`
+                  }}
+                />
+                <span className="text-xs text-gray-500">100%</span>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <Volume2 className="h-4 w-4 text-gray-400" />
+                <span className="text-sm font-mono text-gray-700 w-12 text-center">
+                  {Math.round(volume * 100)}%
+                </span>
+              </div>
             </div>
 
             {/* Cutting Controls */}
