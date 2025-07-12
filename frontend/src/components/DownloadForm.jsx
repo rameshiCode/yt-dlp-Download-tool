@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Plus, X, Download, Music } from 'lucide-react';
 
 const DownloadForm = ({ genres, onStartDownload }) => {
-  const [downloads, setDownloads] = useState([{ url: '', artist: '', title: '' }]);
+  const [urls, setUrls] = useState(['']);
   const [selectedGenre, setSelectedGenre] = useState('');
   const [customGenre, setCustomGenre] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -109,10 +109,10 @@ const DownloadForm = ({ genres, onStartDownload }) => {
           </div>
 
           {/* Genre Selection */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="space-y-6">
             <div>
               <label className="block text-lg font-semibold text-gray-800 mb-4">
-                🎭 Select Genre
+                🎭 Select Genre/Folder
               </label>
               <select
                 value={selectedGenre}
@@ -120,19 +120,20 @@ const DownloadForm = ({ genres, onStartDownload }) => {
                   setSelectedGenre(e.target.value);
                   if (e.target.value) setCustomGenre('');
                 }}
-                className="input-field text-lg"
+                className="input-field text-lg w-full"
               >
-                <option value="">Choose a genre...</option>
+                <option value="">Choose a genre/folder...</option>
                 {genres.map((genre) => (
                   <option key={genre} value={genre}>
-                    {genre}
+                    {genre.includes('/') ? `📁 ${genre}` : `🎵 ${genre}`}
                   </option>
                 ))}
               </select>
             </div>
+
             <div>
               <label className="block text-lg font-semibold text-gray-800 mb-4">
-                ✨ Or Create Custom Genre
+                ✨ Or Create Custom Folder Structure
               </label>
               <input
                 type="text"
@@ -141,9 +142,17 @@ const DownloadForm = ({ genres, onStartDownload }) => {
                   setCustomGenre(e.target.value);
                   if (e.target.value) setSelectedGenre('');
                 }}
-                placeholder="e.g., Lo-Fi Hip Hop, Synthwave"
-                className="input-field text-lg"
+                placeholder="e.g., Hip Hop/50 Cent, Rock/Classic Rock/Led Zeppelin"
+                className="input-field text-lg w-full"
               />
+              <p className="text-sm text-gray-600 mt-2">
+                💡 <strong>Tip:</strong> Use "/" to create subfolders. Examples:
+              </p>
+              <div className="mt-2 space-y-1 text-sm text-gray-600">
+                <div>• <code className="bg-gray-100 px-2 py-1 rounded">Hip Hop/50 Cent</code> → Creates: downloads/hip_hop/50_cent/</div>
+                <div>• <code className="bg-gray-100 px-2 py-1 rounded">Rock/Classic Rock</code> → Creates: downloads/rock/classic_rock/</div>
+                <div>• <code className="bg-gray-100 px-2 py-1 rounded">Electronic/House/Deep House</code> → Creates: downloads/electronic/house/deep_house/</div>
+              </div>
             </div>
           </div>
 
@@ -198,9 +207,9 @@ const DownloadForm = ({ genres, onStartDownload }) => {
           <div className="inline-flex p-4 bg-gradient-to-r from-purple-500 to-pink-600 rounded-2xl mb-4 group-hover:shadow-lg transition-shadow">
             <Plus className="h-8 w-8 text-white" />
           </div>
-          <h3 className="text-xl font-bold text-gray-900 mb-2">📁 Auto Organization</h3>
+          <h3 className="text-xl font-bold text-gray-900 mb-2">📁 Smart Folder Organization</h3>
           <p className="text-gray-600">
-            Files are automatically organized by genre in folders for easy music library management
+            Create nested folder structures like "Hip Hop/50 Cent" or "Rock/Classic Rock" for perfect music library organization
           </p>
         </div>
       </div>

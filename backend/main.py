@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, HttpUrl
 from typing import List, Optional, Dict, Any
 import asyncio
@@ -13,6 +14,8 @@ from mutagen.mp3 import MP3
 from mutagen.id3 import ID3, TIT2, TPE1, TALB, TCON
 import logging
 from datetime import datetime
+import tempfile
+import shutil
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -34,6 +37,12 @@ class DownloadRequest(BaseModel):
     urls: List[HttpUrl]
     genre: str
     quality: Optional[str] = "0"  # 0 = best quality
+
+class AudioCutRequest(BaseModel):
+    file_path: str
+    start_time: float
+    end_time: float
+    output_name: Optional[str] = None
 
 class DownloadStatus(BaseModel):
     id: str
@@ -75,10 +84,20 @@ DOWNLOADS_DIR = Path("../downloads")
 DOWNLOADS_DIR.mkdir(exist_ok=True)
 
 def get_genre_folder(genre: str) -> Path:
-    """Create and return genre-specific folder"""
-    genre_folder = DOWNLOADS_DIR / genre.lower().replace(" ", "_")
-    genre_folder.mkdir(exist_ok=True)
-    return genre_folder
+    """Create and return genre-specific folder with support for nested folders"""
+    # Support nested folders using "/" or "\" as separators
+    # Example: "Hip Hop/50 Cent" or "Hip Hop\G-Unit"
+    genre_parts = genre.replace("\\", "/").split("/")
+
+    # Clean each part and create nested folder structure
+    folder_path = DOWNLOADS_DIR
+    for part in genre_parts:
+        clean_part = part.strip().replace(" ", "_").lower()
+        if clean_part:  # Skip empty parts
+            folder_path = folder_path / clean_part
+
+    folder_path.mkdir(parents=True, exist_ok=True)
+    return folder_path
 
 class DownloadProgressHook:
     def __init__(self, download_id: str):
@@ -331,22 +350,178 @@ async def get_status():
         "history": download_history[-10:]  # Last 10 completed downloads
     }
 
+def scan_folder_structure(path: Path, prefix: str = "") -> List[str]:
+    """Recursively scan folder structure to get all possible genre paths"""
+    genres = []
+    if not path.exists():
+        return genres
+
+    for item in path.iterdir():
+        if item.is_dir():
+            # Convert folder name back to display format
+            display_name = item.name.replace("_", " ").title()
+            full_path = f"{prefix}/{display_name}" if prefix else display_name
+            genres.append(full_path)
+
+            # Recursively scan subfolders (limit depth to avoid infinite recursion)
+            if len(prefix.split("/")) < 3:  # Max 3 levels deep
+                subgenres = scan_folder_structure(item, full_path)
+                genres.extend(subgenres)
+
+    return genres
+
 @app.get("/genres")
 async def get_genres():
-    """Get available genres (folders)"""
+    """Get available genres (folders) including nested structures"""
     genres = []
+
+    # Scan existing folder structure
     if DOWNLOADS_DIR.exists():
-        for item in DOWNLOADS_DIR.iterdir():
-            if item.is_dir():
-                genres.append(item.name.replace("_", " ").title())
-    
-    # Add some default genres if none exist
-    default_genres = ["Hip Hop", "Rock", "Pop", "Electronic", "Jazz", "Classical", "Country", "R&B"]
+        genres = scan_folder_structure(DOWNLOADS_DIR)
+
+    # Add some default genres with examples of nested structure
+    default_genres = [
+        "Hip Hop",
+        "Hip Hop/50 Cent",
+        "Hip Hop/G-Unit",
+        "Hip Hop/Eminem",
+        "Hip Hop/Dr. Dre",
+        "Rock",
+        "Rock/Classic Rock",
+        "Rock/Alternative",
+        "Pop",
+        "Pop/80s",
+        "Pop/90s",
+        "Electronic",
+        "Electronic/House",
+        "Electronic/Techno",
+        "Jazz",
+        "Classical",
+        "Country",
+        "R&B",
+        "R&B/90s R&B",
+        "R&B/Neo Soul"
+    ]
+
     for genre in default_genres:
         if genre not in genres:
             genres.append(genre)
-    
+
     return {"genres": sorted(genres)}
+
+def scan_audio_files(directory: Path, files: List[Dict] = None) -> List[Dict]:
+    """Recursively scan for audio files"""
+    if files is None:
+        files = []
+
+    if not directory.exists():
+        return files
+
+    for item in directory.iterdir():
+        if item.is_file() and item.suffix.lower() in ['.mp3', '.wav', '.m4a', '.flac']:
+            files.append({
+                'name': item.stem,
+                'path': str(item.relative_to(DOWNLOADS_DIR)),
+                'full_path': str(item),
+                'size': item.stat().st_size,
+                'modified': item.stat().st_mtime
+            })
+        elif item.is_dir():
+            scan_audio_files(item, files)
+
+    return files
+
+@app.get("/audio-files")
+async def get_audio_files():
+    """Get list of all downloaded audio files"""
+    try:
+        files = scan_audio_files(DOWNLOADS_DIR)
+        return {"files": sorted(files, key=lambda x: x['modified'], reverse=True)}
+    except Exception as e:
+        logger.error(f"Error scanning audio files: {e}")
+        return {"files": []}
+
+@app.get("/audio/{file_path:path}")
+async def serve_audio_file(file_path: str):
+    """Serve audio file for playback"""
+    try:
+        full_path = DOWNLOADS_DIR / file_path
+        if not full_path.exists() or not full_path.is_file():
+            raise HTTPException(status_code=404, detail="Audio file not found")
+
+        return FileResponse(
+            path=str(full_path),
+            media_type="audio/mpeg",
+            headers={"Accept-Ranges": "bytes"}
+        )
+    except Exception as e:
+        logger.error(f"Error serving audio file: {e}")
+        raise HTTPException(status_code=500, detail="Error serving audio file")
+
+@app.post("/cut-audio")
+async def cut_audio(request: AudioCutRequest):
+    """Cut audio file using FFmpeg"""
+    try:
+        input_path = DOWNLOADS_DIR / request.file_path
+        if not input_path.exists():
+            raise HTTPException(status_code=404, detail="Audio file not found")
+
+        # Create temporary output file
+        output_name = request.output_name or f"cut_{uuid.uuid4().hex[:8]}.mp3"
+        temp_dir = Path(tempfile.gettempdir())
+        output_path = temp_dir / output_name
+
+        # Build FFmpeg command
+        duration = request.end_time - request.start_time
+        cmd = [
+            'ffmpeg',
+            '-i', str(input_path),
+            '-ss', str(request.start_time),
+            '-t', str(duration),
+            '-c', 'copy',  # Copy without re-encoding for speed
+            '-avoid_negative_ts', 'make_zero',
+            '-y',  # Overwrite output file
+            str(output_path)
+        ]
+
+        # Execute FFmpeg command
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode != 0:
+            logger.error(f"FFmpeg error: {result.stderr}")
+            raise HTTPException(status_code=500, detail=f"FFmpeg error: {result.stderr}")
+
+        if not output_path.exists():
+            raise HTTPException(status_code=500, detail="Failed to create output file")
+
+        # Return the file as a download
+        def file_generator():
+            with open(output_path, 'rb') as f:
+                while True:
+                    chunk = f.read(8192)
+                    if not chunk:
+                        break
+                    yield chunk
+            # Clean up temp file after sending
+            try:
+                output_path.unlink()
+            except:
+                pass
+
+        return StreamingResponse(
+            file_generator(),
+            media_type="audio/mpeg",
+            headers={
+                "Content-Disposition": f"attachment; filename={output_name}",
+                "Content-Length": str(output_path.stat().st_size)
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error cutting audio: {e}")
+        raise HTTPException(status_code=500, detail=f"Error cutting audio: {str(e)}")
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):

@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Download, Music, Folder, AlertCircle, CheckCircle, Clock } from 'lucide-react';
+import { Download, Music, Folder, AlertCircle, CheckCircle, Clock, Scissors } from 'lucide-react';
 import { downloadAPI, createWebSocketConnection } from './utils/api';
 import DownloadForm from './components/DownloadForm';
 import DownloadQueue from './components/DownloadQueue';
 import DownloadHistory from './components/DownloadHistory';
+import FFmpegEditor from './components/FFmpegEditor';
 
 function App() {
   const [downloads, setDownloads] = useState([]);
@@ -143,6 +144,7 @@ function App() {
           <div className="flex space-x-2">
             {[
               { id: 'download', label: 'Download', icon: Download },
+              { id: 'ffmpeg', label: 'Audio Editor', icon: Scissors },
               { id: 'queue', label: 'Queue', icon: Clock },
               { id: 'history', label: 'History', icon: Folder },
             ].map(({ id, label, icon: Icon }) => (
@@ -171,6 +173,9 @@ function App() {
               genres={genres}
               onStartDownload={handleStartDownload}
             />
+          )}
+          {activeTab === 'ffmpeg' && (
+            <FFmpegEditor />
           )}
           {activeTab === 'queue' && (
             <DownloadQueue downloads={downloads} />
