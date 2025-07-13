@@ -6,6 +6,8 @@ const DownloadForm = ({ genres, onStartDownload }) => {
   const [selectedGenre, setSelectedGenre] = useState('');
   const [customGenre, setCustomGenre] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [duplicateWarnings, setDuplicateWarnings] = useState(null);
+  const [showDuplicateModal, setShowDuplicateModal] = useState(false);
 
   const addUrlField = () => {
     setUrls([...urls, '']);
@@ -21,6 +23,48 @@ const DownloadForm = ({ genres, onStartDownload }) => {
     const newUrls = [...urls];
     newUrls[index] = value;
     setUrls(newUrls);
+  };
+
+  const checkForDuplicates = async (validUrls, genre) => {
+    try {
+      const response = await fetch('/api/check-duplicates', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          urls: validUrls,
+          genre: genre,
+          quality: 'best'
+        }),
+      });
+
+      if (response.ok) {
+        const duplicates = await response.json();
+        return duplicates;
+      }
+    } catch (error) {
+      console.error('Error checking duplicates:', error);
+    }
+    return null;
+  };
+
+  const proceedWithDownload = async (validUrls, genre) => {
+    setIsLoading(true);
+    try {
+      await onStartDownload(validUrls, genre);
+      // Reset form after successful download
+      setUrls(['']);
+      setSelectedGenre('');
+      setCustomGenre('');
+    } catch (error) {
+      console.error('Download failed:', error);
+      alert('Download failed. Please try again.');
+    } finally {
+      setIsLoading(false);
+      setShowDuplicateModal(false);
+      setDuplicateWarnings(null);
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -50,25 +94,26 @@ const DownloadForm = ({ genres, onStartDownload }) => {
       }
     }
 
-    // Validate genre
+    // Determine genre
     const genre = customGenre.trim() || selectedGenre;
     if (!genre) {
       alert('Please select or enter a genre');
       return;
     }
 
+    // Check for duplicates
     setIsLoading(true);
-    try {
-      await onStartDownload(validUrls, genre);
-      // Reset form
-      setUrls(['']);
-      setSelectedGenre('');
-      setCustomGenre('');
-    } catch (error) {
-      console.error('Download failed:', error);
-    } finally {
-      setIsLoading(false);
+    const duplicates = await checkForDuplicates(validUrls, genre);
+    setIsLoading(false);
+
+    if (duplicates && (duplicates.url_duplicate || duplicates.similar_songs.length > 0)) {
+      setDuplicateWarnings(duplicates);
+      setShowDuplicateModal(true);
+      return;
     }
+
+    // No duplicates found, proceed with download
+    await proceedWithDownload(validUrls, genre);
   };
 
   return (
@@ -230,6 +275,63 @@ const DownloadForm = ({ genres, onStartDownload }) => {
           </p>
         </div>
       </div>
+
+      {/* Duplicate Warning Modal */}
+      {showDuplicateModal && duplicateWarnings && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-2xl max-h-96 overflow-y-auto">
+            <h3 className="text-lg font-bold text-red-600 mb-4">⚠️ Duplicate Content Detected</h3>
+
+            {duplicateWarnings.url_duplicate && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded">
+                <p className="text-red-800 font-medium">URL Already Downloaded</p>
+                <p className="text-red-600 text-sm">One or more URLs have already been downloaded.</p>
+              </div>
+            )}
+
+            {duplicateWarnings.similar_songs.length > 0 && (
+              <div className="mb-4">
+                <p className="font-medium text-gray-800 mb-2">Similar Songs Found:</p>
+                {duplicateWarnings.similar_songs.map((item, index) => (
+                  <div key={index} className="mb-3 p-3 bg-yellow-50 border border-yellow-200 rounded">
+                    <p className="font-medium text-gray-800">
+                      New: {item.new_artist} - {item.new_title}
+                    </p>
+                    <p className="text-sm text-gray-600 mb-2">Similar to:</p>
+                    {item.similar_files.map((similar, idx) => (
+                      <div key={idx} className="text-sm text-gray-700 ml-4">
+                        • {similar.artist} - {similar.title} ({similar.source})
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex space-x-3 mt-6">
+              <button
+                onClick={() => {
+                  setShowDuplicateModal(false);
+                  setDuplicateWarnings(null);
+                }}
+                className="btn-secondary flex-1"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  const validUrls = urls.filter(url => url.trim() !== '');
+                  const genre = customGenre.trim() || selectedGenre;
+                  await proceedWithDownload(validUrls, genre);
+                }}
+                className="btn-primary flex-1"
+              >
+                Download Anyway
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

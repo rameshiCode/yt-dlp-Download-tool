@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, HttpUrl
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Set
 import asyncio
 import json
 import os
@@ -78,10 +78,38 @@ manager = ConnectionManager()
 # Global storage for download status
 download_queue: Dict[str, DownloadStatus] = {}
 download_history: List[DownloadStatus] = []
+downloaded_urls: Set[str] = set()  # Track all downloaded URLs
 
 # Ensure downloads directory exists
 DOWNLOADS_DIR = Path("../downloads")
 DOWNLOADS_DIR.mkdir(exist_ok=True)
+
+# URL tracking file
+URL_HISTORY_FILE = DOWNLOADS_DIR / "url_history.txt"
+
+def load_downloaded_urls():
+    """Load previously downloaded URLs from file"""
+    try:
+        if URL_HISTORY_FILE.exists():
+            with open(URL_HISTORY_FILE, 'r', encoding='utf-8') as f:
+                for line in f:
+                    url = line.strip()
+                    if url:
+                        downloaded_urls.add(url)
+            logger.info(f"Loaded {len(downloaded_urls)} previously downloaded URLs")
+    except Exception as e:
+        logger.error(f"Error loading URL history: {e}")
+
+def save_downloaded_url(url: str):
+    """Save a downloaded URL to the history file"""
+    try:
+        with open(URL_HISTORY_FILE, 'a', encoding='utf-8') as f:
+            f.write(f"{url}\n")
+    except Exception as e:
+        logger.error(f"Error saving URL to history: {e}")
+
+# Load existing URLs on startup
+load_downloaded_urls()
 
 def get_genre_folder(genre: str) -> Path:
     """Create and return genre-specific folder with support for nested folders"""
@@ -222,14 +250,23 @@ async def download_video(download_id: str, url: str, genre: str, quality: str = 
                     try:
                         mp3_path.rename(new_path)
                         logger.info(f"Renamed file to: {clean_filename}")
+                        # Update the file path in the download queue to the new MP3 path
+                        download_queue[download_id].file_path = str(new_path)
                     except Exception as e:
                         logger.warning(f"Could not rename file: {e}")
+                else:
+                    # File wasn't renamed, but update to MP3 path
+                    download_queue[download_id].file_path = str(mp3_path)
             else:
                 logger.warning(f"Could not find downloaded MP3 file for {title}")
-        
+
         # Move to history
         completed_download = download_queue[download_id]
         download_history.append(completed_download)
+
+        # Track the URL as downloaded
+        downloaded_urls.add(url)
+        save_downloaded_url(url)
 
         # Remove from active queue
         del download_queue[download_id]
@@ -252,6 +289,63 @@ async def download_video(download_id: str, url: str, genre: str, quality: str = 
             failed_download = download_queue[download_id]
             download_history.append(failed_download)
             del download_queue[download_id]
+
+def normalize_string(s: str) -> str:
+    """Normalize string for comparison by removing special chars and converting to lowercase"""
+    import re
+    # Remove special characters, convert to lowercase, remove extra spaces
+    normalized = re.sub(r'[^\w\s]', '', s.lower())
+    return ' '.join(normalized.split())
+
+def check_url_duplicate(url: str) -> bool:
+    """Check if URL has already been downloaded"""
+    return url in downloaded_urls
+
+def find_similar_songs(title: str, artist: str) -> List[Dict]:
+    """Find similar songs in download history and existing files"""
+    similar_songs = []
+
+    # Normalize the input for comparison
+    norm_title = normalize_string(title)
+    norm_artist = normalize_string(artist)
+
+    # Check download history
+    for item in download_history:
+        if hasattr(item, 'title') and hasattr(item, 'artist'):
+            hist_title = normalize_string(item.title or '')
+            hist_artist = normalize_string(item.artist or '')
+
+            # Check for exact or very similar matches
+            if (norm_title == hist_title and norm_artist == hist_artist) or \
+               (norm_title in hist_title and norm_artist == hist_artist) or \
+               (hist_title in norm_title and norm_artist == hist_artist):
+                similar_songs.append({
+                    'source': 'history',
+                    'title': item.title,
+                    'artist': item.artist,
+                    'file_path': getattr(item, 'file_path', '')
+                })
+
+    # Check existing files
+    try:
+        files = scan_audio_files(DOWNLOADS_DIR)
+        for file_info in files:
+            file_title = normalize_string(file_info.get('title', ''))
+            file_artist = normalize_string(file_info.get('artist', ''))
+
+            if (norm_title == file_title and norm_artist == file_artist) or \
+               (norm_title in file_title and norm_artist == file_artist) or \
+               (file_title in norm_title and norm_artist == file_artist):
+                similar_songs.append({
+                    'source': 'file',
+                    'title': file_info.get('title', file_info['name']),
+                    'artist': file_info.get('artist', ''),
+                    'file_path': str(DOWNLOADS_DIR / file_info['path'])
+                })
+    except Exception as e:
+        logger.error(f"Error scanning files for duplicates: {e}")
+
+    return similar_songs
 
 def extract_artist_and_title(video_title: str, uploader: str):
     """Extract artist and title from video title using common patterns"""
@@ -329,6 +423,56 @@ def add_metadata_to_mp3(file_path: str, info: dict, genre: str):
 async def root():
     return {"message": "YT-DLP Download Tool API", "status": "running"}
 
+@app.post("/check-duplicates")
+async def check_duplicates(request: DownloadRequest):
+    """Check for duplicate URLs and similar songs before downloading"""
+    try:
+        duplicates = {
+            'url_duplicate': False,
+            'similar_songs': [],
+            'warnings': []
+        }
+
+        # Check each URL for duplicates
+        for url in request.urls:
+            url_str = str(url)
+
+            # Check if URL was already downloaded
+            if check_url_duplicate(url_str):
+                duplicates['url_duplicate'] = True
+                duplicates['warnings'].append(f"URL already downloaded: {url_str}")
+                continue
+
+            # Extract video info to check for similar songs
+            try:
+                with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
+                    info = ydl.extract_info(url_str, download=False)
+                    video_title = info.get('title', 'Unknown')
+                    uploader = info.get('uploader', 'Unknown')
+
+                    # Extract artist and title
+                    artist, clean_title = extract_artist_and_title(video_title, uploader)
+
+                    # Find similar songs
+                    similar = find_similar_songs(clean_title, artist)
+                    if similar:
+                        duplicates['similar_songs'].extend([{
+                            'url': url_str,
+                            'new_title': clean_title,
+                            'new_artist': artist,
+                            'similar_files': similar
+                        }])
+                        duplicates['warnings'].append(f"Similar song found for: {artist} - {clean_title}")
+
+            except Exception as e:
+                logger.warning(f"Could not check duplicates for {url_str}: {e}")
+
+        return duplicates
+
+    except Exception as e:
+        logger.error(f"Error checking duplicates: {e}")
+        raise HTTPException(status_code=500, detail=f"Error checking duplicates: {str(e)}")
+
 @app.post("/download")
 async def start_download(request: DownloadRequest):
     """Start downloading videos"""
@@ -356,9 +500,46 @@ async def start_download(request: DownloadRequest):
 @app.get("/status")
 async def get_status():
     """Get current download status"""
+    # Get persistent history from file system (like audio editor does)
+    persistent_history = []
+    try:
+        files = scan_audio_files(DOWNLOADS_DIR)
+        # Convert file info to download history format
+        for file_info in files:  # All files, just like audio editor
+            # Create a download-like object from file info
+            download_item = {
+                "id": f"file_{hash(file_info['path'])}",  # Generate consistent ID from path
+                "url": "",  # Not available from file system
+                "status": "completed",
+                "progress": 100.0,
+                "title": file_info.get('title', file_info['name']),
+                "artist": file_info.get('artist', ''),
+                "clean_title": file_info.get('title', ''),
+                "file_path": str(DOWNLOADS_DIR / file_info['path']),
+                "genre": file_info.get('genre', ''),
+                "error": None
+            }
+            persistent_history.append(download_item)
+    except Exception as e:
+        logger.error(f"Error getting persistent history: {e}")
+
+    # Combine in-memory history with persistent history, avoiding duplicates
+    combined_history = list(download_history)
+
+    # Add persistent files that aren't already in memory
+    for persistent_item in persistent_history:
+        # Check if this file is already in memory history
+        already_exists = any(
+            item.file_path == persistent_item["file_path"]
+            for item in download_history
+            if hasattr(item, 'file_path') and item.file_path
+        )
+        if not already_exists:
+            combined_history.append(persistent_item)
+
     return {
         "queue": list(download_queue.values()),
-        "history": download_history[-10:]  # Last 10 completed downloads
+        "history": combined_history  # All completed downloads, just like audio editor
     }
 
 def scan_folder_structure(path: Path, prefix: str = "") -> List[str]:
@@ -533,6 +714,59 @@ async def cut_audio(request: AudioCutRequest):
     except Exception as e:
         logger.error(f"Error cutting audio: {e}")
         raise HTTPException(status_code=500, detail=f"Error cutting audio: {str(e)}")
+
+@app.get("/api/download-file/{file_path:path}")
+async def download_file_to_pc(file_path: str):
+    """Download a file to user's PC by file path"""
+    try:
+        logger.info(f"Download request for file: {file_path}")
+
+        # Construct full path
+        full_path = Path(file_path)
+        if not full_path.is_absolute():
+            full_path = DOWNLOADS_DIR / file_path
+
+        # Check if file exists
+        if not full_path.exists() or not full_path.is_file():
+            logger.error(f"File not found: {full_path}")
+            raise HTTPException(status_code=404, detail="File not found")
+
+        # Extract filename for download
+        filename = full_path.name
+
+        # Try to get metadata for a better filename
+        try:
+            from mutagen.mp3 import MP3
+            from mutagen.id3 import ID3NoHeaderError
+
+            audio = MP3(str(full_path))
+            artist = str(audio.get('TPE1', [''])[0]) if audio.get('TPE1') else ''
+            title = str(audio.get('TIT2', [''])[0]) if audio.get('TIT2') else ''
+
+            if artist and title:
+                filename = f"{artist} - {title}.mp3"
+                # Clean filename
+                filename = "".join(c for c in filename if c.isalnum() or c in (' ', '-', '_', '.')).rstrip()
+        except Exception as e:
+            logger.warning(f"Could not read metadata: {e}")
+            # Use original filename
+            pass
+
+        logger.info(f"Serving file: {full_path} as {filename}")
+
+        return FileResponse(
+            path=str(full_path),
+            media_type="audio/mpeg",
+            filename=filename,
+            headers={
+                "Content-Disposition": f"attachment; filename=\"{filename}\"",
+                "Accept-Ranges": "bytes"
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"Error downloading file: {e}")
+        raise HTTPException(status_code=500, detail="Error downloading file")
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):

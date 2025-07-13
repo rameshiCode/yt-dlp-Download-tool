@@ -12,6 +12,10 @@ const FFmpegEditor = () => {
   const [startTime, setStartTime] = useState(0);
   const [endTime, setEndTime] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
+
+  // Local state for input fields to allow free editing
+  const [startTimeInput, setStartTimeInput] = useState('0.00');
+  const [endTimeInput, setEndTimeInput] = useState('0.00');
   
   const audioRef = useRef(null);
   const canvasRef = useRef(null);
@@ -58,6 +62,7 @@ const FFmpegEditor = () => {
     if (audio) {
       setDuration(audio.duration);
       setEndTime(audio.duration);
+      setEndTimeInput(formatTimeInput(audio.duration));
       drawWaveform();
     }
   };
@@ -100,10 +105,12 @@ const FFmpegEditor = () => {
 
   const setStartMarker = () => {
     setStartTime(currentTime);
+    setStartTimeInput(formatTimeInput(currentTime));
   };
 
   const setEndMarker = () => {
     setEndTime(currentTime);
+    setEndTimeInput(formatTimeInput(currentTime));
   };
 
   const toggleMute = () => {
@@ -123,72 +130,91 @@ const FFmpegEditor = () => {
     const width = canvas.width;
     const height = canvas.height;
 
-    // Clear canvas with gradient background
-    const gradient = ctx.createLinearGradient(0, 0, 0, height);
-    gradient.addColorStop(0, '#1e293b');
-    gradient.addColorStop(1, '#334155');
-    ctx.fillStyle = gradient;
+    // Clear canvas with dark gradient background
+    const bgGradient = ctx.createLinearGradient(0, 0, 0, height);
+    bgGradient.addColorStop(0, '#0f0f23');
+    bgGradient.addColorStop(0.5, '#1a1a2e');
+    bgGradient.addColorStop(1, '#16213e');
+    ctx.fillStyle = bgGradient;
     ctx.fillRect(0, 0, width, height);
 
-    // Generate realistic waveform data
-    const barWidth = 3;
-    const barSpacing = 1;
-    const numBars = Math.floor(width / (barWidth + barSpacing));
+    // Create flowing sea wave pattern
+    const centerY = height / 2;
+    const time = Date.now() * 0.001; // For animation
 
-    // Create waveform with varying amplitudes
-    for (let i = 0; i < numBars; i++) {
-      const x = i * (barWidth + barSpacing);
+    // Draw multiple wave layers for depth
+    const waveColors = [
+      { color: '#00d4ff', alpha: 0.8, frequency: 0.02, amplitude: 40, phase: 0 },
+      { color: '#0099cc', alpha: 0.6, frequency: 0.015, amplitude: 30, phase: Math.PI / 3 },
+      { color: '#0066aa', alpha: 0.4, frequency: 0.025, amplitude: 25, phase: Math.PI / 2 },
+      { color: '#004488', alpha: 0.3, frequency: 0.018, amplitude: 35, phase: Math.PI },
+    ];
 
-      // Create more realistic waveform pattern
-      const baseAmplitude = Math.sin(i * 0.1) * 0.3 + 0.4; // Base wave pattern
-      const noise = (Math.random() - 0.5) * 0.4; // Random variation
-      const envelope = Math.sin((i / numBars) * Math.PI) * 0.8; // Envelope shape
+    waveColors.forEach((wave, layerIndex) => {
+      ctx.beginPath();
+      ctx.moveTo(0, centerY);
 
-      let amplitude = (baseAmplitude + noise) * envelope;
-      amplitude = Math.max(0.1, Math.min(0.9, amplitude)); // Clamp values
+      // Create smooth flowing wave
+      for (let x = 0; x <= width; x += 2) {
+        const progress = x / width;
 
-      const barHeight = amplitude * height * 0.8;
-      const y = (height - barHeight) / 2;
+        // Multiple sine waves for complex pattern
+        const wave1 = Math.sin(x * wave.frequency + time + wave.phase) * wave.amplitude;
+        const wave2 = Math.sin(x * wave.frequency * 1.5 + time * 0.7 + wave.phase) * wave.amplitude * 0.5;
+        const wave3 = Math.sin(x * wave.frequency * 0.8 + time * 1.2 + wave.phase) * wave.amplitude * 0.3;
 
-      // Create gradient for each bar
-      const barGradient = ctx.createLinearGradient(0, y, 0, y + barHeight);
-      barGradient.addColorStop(0, '#60a5fa');
-      barGradient.addColorStop(0.5, '#3b82f6');
-      barGradient.addColorStop(1, '#1d4ed8');
+        // Combine waves with envelope
+        const envelope = Math.sin(progress * Math.PI) * 0.8 + 0.2;
+        const y = centerY + (wave1 + wave2 + wave3) * envelope;
 
-      ctx.fillStyle = barGradient;
-      ctx.fillRect(x, y, barWidth, barHeight);
+        ctx.lineTo(x, y);
+      }
 
-      // Add highlight on top
-      ctx.fillStyle = 'rgba(147, 197, 253, 0.6)';
-      ctx.fillRect(x, y, barWidth, Math.max(1, barHeight * 0.1));
-    }
+      // Create gradient for wave
+      const waveGradient = ctx.createLinearGradient(0, centerY - wave.amplitude, 0, centerY + wave.amplitude);
+      waveGradient.addColorStop(0, wave.color + Math.round(wave.alpha * 255).toString(16).padStart(2, '0'));
+      waveGradient.addColorStop(0.5, wave.color + Math.round(wave.alpha * 180).toString(16).padStart(2, '0'));
+      waveGradient.addColorStop(1, wave.color + Math.round(wave.alpha * 100).toString(16).padStart(2, '0'));
 
-    // Draw current time indicator
+      ctx.strokeStyle = waveGradient;
+      ctx.lineWidth = 3 - layerIndex * 0.5;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.shadowColor = wave.color;
+      ctx.shadowBlur = 10;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    });
+
+    // Draw current time indicator with glow
     const currentX = (currentTime / duration) * width;
-    ctx.strokeStyle = '#ef4444';
-    ctx.lineWidth = 3;
-    ctx.shadowColor = '#ef4444';
-    ctx.shadowBlur = 5;
+    ctx.strokeStyle = '#ff0080';
+    ctx.lineWidth = 4;
+    ctx.shadowColor = '#ff0080';
+    ctx.shadowBlur = 15;
     ctx.beginPath();
     ctx.moveTo(currentX, 0);
     ctx.lineTo(currentX, height);
     ctx.stroke();
     ctx.shadowBlur = 0;
 
-    // Draw start/end selection area
+    // Draw start/end selection area with neon effect
     const startX = (startTime / duration) * width;
     const endX = (endTime / duration) * width;
 
-    // Selection overlay
-    ctx.fillStyle = 'rgba(34, 197, 94, 0.2)';
+    // Selection overlay with gradient
+    const selectionGradient = ctx.createLinearGradient(startX, 0, endX, 0);
+    selectionGradient.addColorStop(0, 'rgba(0, 255, 128, 0.1)');
+    selectionGradient.addColorStop(0.5, 'rgba(0, 255, 128, 0.2)');
+    selectionGradient.addColorStop(1, 'rgba(0, 255, 128, 0.1)');
+    ctx.fillStyle = selectionGradient;
     ctx.fillRect(startX, 0, endX - startX, height);
 
-    // Selection borders
-    ctx.strokeStyle = '#22c55e';
+    // Selection borders with neon glow
+    ctx.strokeStyle = '#00ff80';
     ctx.lineWidth = 3;
-    ctx.shadowColor = '#22c55e';
-    ctx.shadowBlur = 3;
+    ctx.shadowColor = '#00ff80';
+    ctx.shadowBlur = 10;
     ctx.beginPath();
     ctx.moveTo(startX, 0);
     ctx.lineTo(startX, height);
@@ -201,6 +227,10 @@ const FFmpegEditor = () => {
   useEffect(() => {
     if (duration > 0) {
       drawWaveform();
+
+      // Animate the waveform
+      const animationInterval = setInterval(drawWaveform, 50); // 20 FPS
+      return () => clearInterval(animationInterval);
     }
   }, [currentTime, startTime, endTime, duration]);
 
@@ -233,6 +263,29 @@ const FFmpegEditor = () => {
     const minutes = Math.floor(time / 60);
     const seconds = Math.floor(time % 60);
     return `${minutes}.${seconds.toString().padStart(2, '0')}`;
+  };
+
+  // Handle start time input changes
+  const handleStartTimeChange = (value) => {
+    setStartTimeInput(value);
+    const parsedTime = parseTimeInput(value);
+    setStartTime(parsedTime);
+  };
+
+  // Handle end time input changes
+  const handleEndTimeChange = (value) => {
+    setEndTimeInput(value);
+    const parsedTime = parseTimeInput(value);
+    setEndTime(parsedTime);
+  };
+
+  // Handle input blur to format the display
+  const handleStartTimeBlur = () => {
+    setStartTimeInput(formatTimeInput(startTime));
+  };
+
+  const handleEndTimeBlur = () => {
+    setEndTimeInput(formatTimeInput(endTime));
   };
 
   const handleCutAudio = async () => {
@@ -449,8 +502,9 @@ const FFmpegEditor = () => {
                 <div className="flex space-x-2">
                   <input
                     type="text"
-                    value={formatTimeInput(startTime)}
-                    onChange={(e) => setStartTime(parseTimeInput(e.target.value))}
+                    value={startTimeInput}
+                    onChange={(e) => handleStartTimeChange(e.target.value)}
+                    onBlur={handleStartTimeBlur}
                     placeholder="0.00"
                     className="input-field flex-1 font-mono"
                   />
@@ -473,8 +527,9 @@ const FFmpegEditor = () => {
                 <div className="flex space-x-2">
                   <input
                     type="text"
-                    value={formatTimeInput(endTime)}
-                    onChange={(e) => setEndTime(parseTimeInput(e.target.value))}
+                    value={endTimeInput}
+                    onChange={(e) => handleEndTimeChange(e.target.value)}
+                    onBlur={handleEndTimeBlur}
                     placeholder="1.00"
                     className="input-field flex-1 font-mono"
                   />
